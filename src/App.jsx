@@ -1,8 +1,7 @@
-// ChopsticksGame.jsx
 import React, { useState, useEffect } from 'react';
 import { Users, Swords, Hand, Wifi, Copy, Check } from 'lucide-react';
 import { db } from './firebase';
-import { doc, getDoc, setDoc, updateDoc, onSnapshot } from 'firebase/firestore';
+import { doc, getDoc, setDoc, onSnapshot } from 'firebase/firestore';
 
 export default function ChopsticksGame() {
   const [gameMode, setGameMode] = useState('menu');
@@ -22,47 +21,30 @@ export default function ChopsticksGame() {
   const [jankenChoice, setJankenChoice] = useState(null);
   const [jankenResult, setJankenResult] = useState(null);
 
+  // Firebaseからリアルタイムでゲーム状態を取得
   useEffect(() => {
-    let unsubscribe = null;
-
     if (gameMode === 'online' && roomCode) {
-      const ref = doc(db, 'games', roomCode);
-      // subscribe to realtime updates
-      unsubscribe = onSnapshot(ref, (snap) => {
-        if (snap.exists()) {
-          const state = snap.data();
+      const gameRef = doc(db, 'games', roomCode);
+      const unsubscribe = onSnapshot(gameRef, (docSnap) => {
+        if (docSnap.exists()) {
+          const state = docSnap.data();
           setGameState(state);
           setWaiting(false);
-
+          
           if (state.phase === 'janken' && state.janken1 && state.janken2) {
             determineJankenWinner(state);
           }
         }
       });
+      
+      return () => unsubscribe();
     }
-
-    return () => {
-      if (unsubscribe) unsubscribe();
-    };
   }, [gameMode, roomCode]);
 
-  const loadGameStateOnce = async (code) => {
-    try {
-      const ref = doc(db, 'games', code);
-      const snap = await getDoc(ref);
-      if (snap.exists()) return snap.data();
-      return null;
-    } catch (e) {
-      console.error(e);
-      return null;
-    }
-  };
-
   const saveGameState = async (state) => {
-    if (!roomCode) return;
     try {
-      const ref = doc(db, 'games', roomCode);
-      await setDoc(ref, state);
+      const gameRef = doc(db, 'games', roomCode);
+      await setDoc(gameRef, state);
     } catch (error) {
       console.error('Failed to save game state:', error);
     }
@@ -74,7 +56,7 @@ export default function ChopsticksGame() {
     setMyPlayer(1);
     setGameMode('online');
     setWaiting(true);
-
+    
     const initialState = {
       player1: { left: 1, right: 1 },
       player2: { left: 1, right: 1 },
@@ -86,61 +68,50 @@ export default function ChopsticksGame() {
       janken1: null,
       janken2: null
     };
-
-    try {
-      const ref = doc(db, 'games', code);
-      await setDoc(ref, initialState);
-      setGameState(initialState);
-    } catch (e) {
-      console.error('createRoom error', e);
-      alert('ルーム作成に失敗しました');
-    }
+    
+    const gameRef = doc(db, 'games', code);
+    await setDoc(gameRef, initialState);
+    setGameState(initialState);
   };
 
   const joinRoom = async (code) => {
-    if (!code) return;
     try {
-      const ref = doc(db, 'games', code);
-      const snap = await getDoc(ref);
-      if (snap.exists()) {
-        const state = snap.data();
-        const updated = { ...state, players: 2 };
-        await setDoc(ref, updated);
-
+      const gameRef = doc(db, 'games', code);
+      const docSnap = await getDoc(gameRef);
+      
+      if (docSnap.exists()) {
+        const state = docSnap.data();
+        state.players = 2;
+        await setDoc(gameRef, state);
+        
         setRoomCode(code);
         setMyPlayer(2);
         setGameMode('online');
-        setGameState(updated);
+        setGameState(state);
       } else {
         alert('ルームが見つかりません');
       }
     } catch (error) {
-      console.error('joinRoom error', error);
       alert('ルームが見つかりません');
     }
   };
 
   const makeJankenChoice = async (choice) => {
-    if (!roomCode || !myPlayer) return;
     setJankenChoice(choice);
-    try {
-      const ref = doc(db, 'games', roomCode);
-      const snap = await getDoc(ref);
-      const state = snap.exists() ? snap.data() : { ...gameState };
-      const newState = { ...state, [`janken${myPlayer}`]: choice };
-      await setDoc(ref, newState);
-      setGameState(newState);
-    } catch (e) {
-      console.error('janken save error', e);
-    }
+    const newState = {
+      ...gameState,
+      [`janken${myPlayer}`]: choice
+    };
+    setGameState(newState);
+    await saveGameState(newState);
   };
 
   const determineJankenWinner = (state) => {
     const j1 = state.janken1;
     const j2 = state.janken2;
-
+    
     if (!j1 || !j2) return;
-
+    
     let winner = null;
     if (j1 === j2) {
       winner = 'draw';
@@ -153,46 +124,41 @@ export default function ChopsticksGame() {
     } else {
       winner = 2;
     }
-
+    
     setJankenResult({ winner, j1, j2 });
-
+    
     if (winner !== 'draw') {
       setTimeout(async () => {
-        try {
-          const ref = doc(db, 'games', roomCode);
-          const newState = {
-            ...state,
-            phase: 'playing',
-            currentPlayer: winner
-          };
-          await setDoc(ref, newState);
-          setGameState(newState);
-          setJankenResult(null);
-        } catch (e) {
-          console.error(e);
-        }
+        const newState = {
+          ...state,
+          phase: 'playing',
+          currentPlayer: winner
+        };
+        setGameState(newState);
+        setJankenResult(null);
+        await saveGameState(newState);
       }, 3000);
     } else {
       setTimeout(async () => {
-        try {
-          const ref = doc(db, 'games', roomCode);
-          const newState = { ...state, janken1: null, janken2: null };
-          await setDoc(ref, newState);
-          setGameState(newState);
-          setJankenChoice(null);
-          setJankenResult(null);
-        } catch (e) {
-          console.error(e);
-        }
+        const newState = {
+          ...state,
+          janken1: null,
+          janken2: null
+        };
+        setGameState(newState);
+        setJankenChoice(null);
+        setJankenResult(null);
+        await saveGameState(newState);
       }, 3000);
     }
   };
 
-  const selectHand = async (player, hand) => {
+  const selectHand = (player, hand) => {
     if (gameState.winner || gameState.phase !== 'playing') return;
+    
     if (gameMode === 'online' && player !== myPlayer) return;
     if (gameMode === 'local' && player !== gameState.currentPlayer) return;
-
+    
     const fingers = gameState[`player${player}`][hand];
     if (fingers === 0 || fingers >= 5) return;
 
@@ -200,29 +166,31 @@ export default function ChopsticksGame() {
       ...gameState,
       selectedHand: gameState.selectedHand === `${player}-${hand}` ? null : `${player}-${hand}`
     };
-
+    
     setGameState(newState);
-    if (gameMode === 'online') await saveGameState(newState);
+    if (gameMode === 'online') saveGameState(newState);
   };
 
-  const attack = async (targetPlayer, targetHand) => {
+  const attack = (targetPlayer, targetHand) => {
     if (gameState.winner || gameState.phase !== 'playing') return;
     if (!gameState.selectedHand) return;
-
+    
     const [attackPlayer, attackHand] = gameState.selectedHand.split('-');
-
+    
     if (gameMode === 'online' && parseInt(attackPlayer) !== myPlayer) return;
     if (gameMode === 'local' && parseInt(attackPlayer) !== gameState.currentPlayer) return;
     if (parseInt(targetPlayer) === parseInt(attackPlayer)) return;
 
     const attackFingers = gameState[`player${attackPlayer}`][attackHand];
     const targetFingers = gameState[`player${targetPlayer}`][targetHand];
-
+    
     if (attackFingers === 0 || attackFingers >= 5 || targetFingers === 0 || targetFingers >= 5) return;
 
     let newFingers = targetFingers + attackFingers;
-    if (newFingers >= 5) newFingers = 0;
-
+    if (newFingers >= 5) {
+      newFingers = 0;
+    }
+    
     const newState = {
       ...gameState,
       [`player${targetPlayer}`]: {
@@ -236,19 +204,24 @@ export default function ChopsticksGame() {
     checkWinner(newState);
   };
 
-  const transfer = async (fromHand, toHand) => {
+  const transfer = (fromHand, toHand) => {
     if (gameState.winner || gameState.phase !== 'playing') return;
-
+    
     const currentPlayerId = gameMode === 'online' ? myPlayer : gameState.currentPlayer;
+    
     const player = `player${currentPlayerId}`;
     const from = gameState[player][fromHand];
     const to = gameState[player][toHand];
-
+    
     if (from < 2) return;
 
     const amount = 1;
+    if (from - amount < 0) return;
+
     let newTo = to + amount;
-    if (newTo >= 5) newTo = 0;
+    if (newTo >= 5) {
+      newTo = 0;
+    }
 
     const newState = {
       ...gameState,
@@ -264,18 +237,17 @@ export default function ChopsticksGame() {
     checkWinner(newState);
   };
 
-  const checkWinner = async (state) => {
+  const checkWinner = (state) => {
     if (state.player1.left === 0 && state.player1.right === 0) {
       state.winner = 2;
     } else if (state.player2.left === 0 && state.player2.right === 0) {
       state.winner = 1;
     }
-
     setGameState(state);
-    if (gameMode === 'online') await saveGameState(state);
+    if (gameMode === 'online') saveGameState(state);
   };
 
-  const reset = async () => {
+  const reset = () => {
     const newState = {
       player1: { left: 1, right: 1 },
       player2: { left: 1, right: 1 },
@@ -290,7 +262,7 @@ export default function ChopsticksGame() {
     setGameState(newState);
     setJankenChoice(null);
     setJankenResult(null);
-    if (gameMode === 'online') await saveGameState(newState);
+    if (gameMode === 'online') saveGameState(newState);
   };
 
   const copyRoomCode = () => {
@@ -299,8 +271,7 @@ export default function ChopsticksGame() {
     setTimeout(() => setCopied(false), 2000);
   };
 
-  const leaveRoom = async () => {
-    // optional: clear players or decrement
+  const leaveRoom = () => {
     setGameMode('menu');
     setRoomCode('');
     setMyPlayer(null);
@@ -312,7 +283,7 @@ export default function ChopsticksGame() {
   const renderHand = (player, hand, fingers) => {
     const isSelected = gameState.selectedHand === `${player}-${hand}`;
     const isDead = fingers === 0 || fingers >= 5;
-
+    
     let isMyTurn = false;
     if (gameMode === 'online') {
       isMyTurn = player === myPlayer;

@@ -12,8 +12,6 @@ const firebaseConfig = {
 
 // Initialize Firebase
 const app = initializeApp(firebaseConfig);
-// Firebaseを初期化
-const app = initializeApp(firebaseConfig);
 
 // Firestoreを取得
 export const db = getFirestore(app);
