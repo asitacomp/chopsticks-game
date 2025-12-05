@@ -333,6 +333,42 @@ export default function ChopsticksGame() {
     checkWinner(newState);
   };
 
+  const selfAttack = (targetHand) => {
+    if (gameState.winner || gameState.phase !== 'playing') return;
+    if (!gameState.selectedHand) return;
+    
+    const [attackPlayer, attackHand] = gameState.selectedHand.split('-');
+    
+    if (gameMode === 'online' && parseInt(attackPlayer) !== myPlayer) return;
+    if (gameMode === 'local' && opponentType === 'human' && parseInt(attackPlayer) !== gameState.currentPlayer) return;
+    if (gameMode === 'local' && opponentType === 'cpu' && parseInt(attackPlayer) !== 1) return;
+    
+    // 同じ手への攻撃は不可
+    if (targetHand === attackHand) return;
+
+    const attackFingers = gameState[`player${attackPlayer}`][attackHand];
+    const targetFingers = gameState[`player${attackPlayer}`][targetHand];
+    
+    if (attackFingers === 0 || attackFingers >= 5 || targetFingers === 0 || targetFingers >= 5) return;
+
+    let newFingers = targetFingers + attackFingers;
+    if (newFingers >= 5) {
+      newFingers = 0;
+    }
+    
+    const newState = {
+      ...gameState,
+      [`player${attackPlayer}`]: {
+        ...gameState[`player${attackPlayer}`],
+        [targetHand]: newFingers
+      },
+      selectedHand: null,
+      currentPlayer: gameState.currentPlayer === 1 ? 2 : 1
+    };
+
+    checkWinner(newState);
+  };
+
   const transfer = (fromHand, toHand) => {
     if (gameState.winner || gameState.phase !== 'playing') return;
     
@@ -442,9 +478,12 @@ export default function ChopsticksGame() {
     return (
       <button
         onClick={() => {
-          if (isMyTurn && !isDead) {
+          const [attackPlayer] = gameState.selectedHand ? gameState.selectedHand.split('-') : [null];
+          const isSelfAttack = gameState.selectedHand && parseInt(attackPlayer) === player;
+          
+          if (isMyTurn && !isDead && !isSelfAttack) {
             selectHand(player, hand);
-          } else if (gameState.selectedHand && !isDead) {
+          } else if (gameState.selectedHand && !isDead && !isSelfAttack) {
             attack(player, hand);
           }
         }}
@@ -803,31 +842,52 @@ export default function ChopsticksGame() {
         {((gameMode === 'online' && myPlayer && gameState.currentPlayer === myPlayer) || 
           (gameMode === 'local' && opponentType === 'cpu' && gameState.currentPlayer === 1) ||
           (gameMode === 'local' && opponentType === 'human')) && !gameState.winner && (
-          <div className="mt-4 p-3 bg-slate-800 rounded-lg">
-            <div className="text-xs text-center mb-2 text-gray-300">分解 (2本以上から)</div>
-            <div className="flex justify-center gap-3">
-              <button
-                onClick={() => transfer('left', 'right')}
-                className="px-3 py-2 bg-blue-600 rounded-lg text-sm hover:bg-blue-700 disabled:opacity-50"
-                disabled={
-                  (gameMode === 'online' && gameState[`player${myPlayer}`]?.left < 2) ||
-                  (gameMode === 'local' && opponentType === 'cpu' && gameState.player1.left < 2) ||
-                  (gameMode === 'local' && opponentType === 'human' && gameState[`player${gameState.currentPlayer}`]?.left < 2)
-                }
-              >
-                左 → 右
-              </button>
-              <button
-                onClick={() => transfer('right', 'left')}
-                className="px-3 py-2 bg-blue-600 rounded-lg text-sm hover:bg-blue-700 disabled:opacity-50"
-                disabled={
-                  (gameMode === 'online' && gameState[`player${myPlayer}`]?.right < 2) ||
-                  (gameMode === 'local' && opponentType === 'cpu' && gameState.player1.right < 2) ||
-                  (gameMode === 'local' && opponentType === 'human' && gameState[`player${gameState.currentPlayer}`]?.right < 2)
-                }
-              >
-                右 → 左
-              </button>
+          <div className="mt-4 space-y-3">
+            <div className="p-3 bg-slate-800 rounded-lg">
+              <div className="text-xs text-center mb-2 text-gray-300">自分の手に攻撃</div>
+              <div className="flex justify-center gap-3">
+                <button
+                  onClick={() => selfAttack('left')}
+                  className="px-3 py-2 bg-red-600 rounded-lg text-sm hover:bg-red-700 disabled:opacity-50"
+                  disabled={!gameState.selectedHand}
+                >
+                  左手を攻撃
+                </button>
+                <button
+                  onClick={() => selfAttack('right')}
+                  className="px-3 py-2 bg-red-600 rounded-lg text-sm hover:bg-red-700 disabled:opacity-50"
+                  disabled={!gameState.selectedHand}
+                >
+                  右手を攻撃
+                </button>
+              </div>
+            </div>
+            <div className="p-3 bg-slate-800 rounded-lg">
+              <div className="text-xs text-center mb-2 text-gray-300">分解 (2本以上から)</div>
+              <div className="flex justify-center gap-3">
+                <button
+                  onClick={() => transfer('left', 'right')}
+                  className="px-3 py-2 bg-blue-600 rounded-lg text-sm hover:bg-blue-700 disabled:opacity-50"
+                  disabled={
+                    (gameMode === 'online' && gameState[`player${myPlayer}`]?.left < 2) ||
+                    (gameMode === 'local' && opponentType === 'cpu' && gameState.player1.left < 2) ||
+                    (gameMode === 'local' && opponentType === 'human' && gameState[`player${gameState.currentPlayer}`]?.left < 2)
+                  }
+                >
+                  左 → 右
+                </button>
+                <button
+                  onClick={() => transfer('right', 'left')}
+                  className="px-3 py-2 bg-blue-600 rounded-lg text-sm hover:bg-blue-700 disabled:opacity-50"
+                  disabled={
+                    (gameMode === 'online' && gameState[`player${myPlayer}`]?.right < 2) ||
+                    (gameMode === 'local' && opponentType === 'cpu' && gameState.player1.right < 2) ||
+                    (gameMode === 'local' && opponentType === 'human' && gameState[`player${gameState.currentPlayer}`]?.right < 2)
+                  }
+                >
+                  右 → 左
+                </button>
+              </div>
             </div>
           </div>
         )}
