@@ -48,8 +48,9 @@ export default function ChopsticksGame() {
   const [username, setUsername] = useState('');
   const [showNameInput, setShowNameInput] = useState(false);
   const [opponentName, setOpponentName] = useState('');
-  const [opponentOnline, setOpponentOnline] = useState(true);
   const [timeLeft, setTimeLeft] = useState(30);
+  const [timeoutCount, setTimeoutCount] = useState({ player1: 0, player2: 0 });
+  const [opponentDisconnected, setOpponentDisconnected] = useState(false);
   const [jankenChoice, setJankenChoice] = useState(null);
   const [jankenResult, setJankenResult] = useState(null);
 
@@ -86,11 +87,13 @@ export default function ChopsticksGame() {
             setOpponentName(state.player1Name);
           }
           
-          const opponentLastSeen = myPlayer === 1 ? state.player2LastSeen : state.player1LastSeen;
-          if (opponentLastSeen) {
-            const now = Date.now();
-            const lastSeen = opponentLastSeen.toMillis ? opponentLastSeen.toMillis() : opponentLastSeen;
-            setOpponentOnline(now - lastSeen < 10000);
+          // タイムアウト回数をチェック
+          if (state.timeoutCount) {
+            setTimeoutCount(state.timeoutCount);
+            const opponentTimeouts = myPlayer === 1 ? state.timeoutCount.player2 : state.timeoutCount.player1;
+            if (opponentTimeouts >= 2) {
+              setOpponentDisconnected(true);
+            }
           }
           
           // じゃんけん結果判定
@@ -116,7 +119,7 @@ export default function ChopsticksGame() {
     try {
       const gameRef = firestoreFunctions.doc(db, 'games', roomCode);
       await firestoreFunctions.updateDoc(gameRef, {
-        [`player${myPlayer}LastSeen`]: firestoreFunctions.serverTimestamp()
+        [`player${myPlayer}LastActive`]: Date.now()
       });
     } catch (error) {
       console.error('Heartbeat failed:', error);
@@ -206,11 +209,27 @@ export default function ChopsticksGame() {
   }, [gameState.currentPlayer, gameState.phase, gameState.winner, gameState.turnStartTime]);
 
   const handleTimeOut = () => {
+    const currentPlayerKey = `player${gameState.currentPlayer}`;
+    const newTimeoutCount = {
+      ...timeoutCount,
+      [currentPlayerKey]: (timeoutCount[currentPlayerKey] || 0) + 1
+    };
+    
+    setTimeoutCount(newTimeoutCount);
+    
+    // 2回タイムアウトで切断扱い
+    if (newTimeoutCount[currentPlayerKey] >= 2) {
+      if (gameMode === 'online' && gameState.currentPlayer !== myPlayer) {
+        setOpponentDisconnected(true);
+      }
+    }
+    
     const newState = {
       ...gameState,
       selectedHand: null,
       currentPlayer: gameState.currentPlayer === 1 ? 2 : 1,
-      turnStartTime: Date.now()
+      turnStartTime: Date.now(),
+      timeoutCount: newTimeoutCount
     };
     setGameState(newState);
     if (gameMode === 'online') saveGameState(newState);
@@ -270,7 +289,7 @@ export default function ChopsticksGame() {
       const gameRef = firestoreFunctions.doc(db, 'games', roomCode);
       await firestoreFunctions.setDoc(gameRef, {
         ...state,
-        [`player${myPlayer}LastSeen`]: firestoreFunctions.serverTimestamp()
+        [`player${myPlayer}LastActive`]: Date.now()
       }, { merge: true });
     } catch (error) {
       console.error('Failed to save game state:', error);
@@ -305,11 +324,12 @@ export default function ChopsticksGame() {
       roomType: 'private',
       player1Name: username,
       player2Name: null,
-      player1LastSeen: firestoreFunctions.serverTimestamp(),
-      player2LastSeen: null,
+      player1LastActive: Date.now(),
+      player2LastActive: null,
       turnStartTime: Date.now(),
       janken1: null,
-      janken2: null
+      janken2: null,
+      timeoutCount: { player1: 0, player2: 0 }
     };
     
     const gameRef = firestoreFunctions.doc(db, 'games', code);
@@ -348,7 +368,7 @@ export default function ChopsticksGame() {
         await firestoreFunctions.updateDoc(firestoreFunctions.doc(db, 'games', code), { 
           players: 2,
           player2Name: username,
-          player2LastSeen: firestoreFunctions.serverTimestamp()
+          player2LastActive: Date.now()
         });
         
         setRoomCode(code);
@@ -375,11 +395,12 @@ export default function ChopsticksGame() {
           roomType: 'random',
           player1Name: username,
           player2Name: null,
-          player1LastSeen: firestoreFunctions.serverTimestamp(),
-          player2LastSeen: null,
+          player1LastActive: Date.now(),
+          player2LastActive: null,
           turnStartTime: Date.now(),
           janken1: null,
-          janken2: null
+          janken2: null,
+          timeoutCount: { player1: 0, player2: 0 }
         };
         
         const gameRef = firestoreFunctions.doc(db, 'games', code);
@@ -429,7 +450,7 @@ export default function ChopsticksGame() {
         state.player2Name = username;
         await firestoreFunctions.setDoc(gameRef, {
           ...state,
-          player2LastSeen: firestoreFunctions.serverTimestamp()
+          player2LastActive: Date.now()
         });
         
         setRoomCode(code);
@@ -502,7 +523,8 @@ export default function ChopsticksGame() {
       },
       selectedHand: null,
       currentPlayer: gameState.currentPlayer === 1 ? 2 : 1,
-      turnStartTime: Date.now()
+      turnStartTime: Date.now(),
+      timeoutCount: { player1: 0, player2: 0 } // 成功時はリセット
     };
 
     checkWinner(newState);
@@ -542,7 +564,8 @@ export default function ChopsticksGame() {
       },
       selectedHand: null,
       currentPlayer: gameState.currentPlayer === 1 ? 2 : 1,
-      turnStartTime: Date.now()
+      turnStartTime: Date.now(),
+      timeoutCount: { player1: 0, player2: 0 } // 成功時はリセット
     };
 
     checkWinner(newState);
@@ -585,7 +608,8 @@ export default function ChopsticksGame() {
       },
       selectedHand: null,
       currentPlayer: gameState.currentPlayer === 1 ? 2 : 1,
-      turnStartTime: Date.now()
+      turnStartTime: Date.now(),
+      timeoutCount: { player1: 0, player2: 0 } // 成功時はリセット
     };
 
     checkWinner(newState);
@@ -613,16 +637,19 @@ export default function ChopsticksGame() {
       roomType: gameState.roomType,
       player1Name: gameState.player1Name,
       player2Name: gameState.player2Name,
-      player1LastSeen: gameState.player1LastSeen,
-      player2LastSeen: gameState.player2LastSeen,
+      player1LastActive: gameState.player1LastActive,
+      player2LastActive: gameState.player2LastActive,
       turnStartTime: Date.now(),
       janken1: null,
-      janken2: null
+      janken2: null,
+      timeoutCount: { player1: 0, player2: 0 }
     };
     setGameState(newState);
     setTimeLeft(30);
     setJankenChoice(null);
     setJankenResult(null);
+    setTimeoutCount({ player1: 0, player2: 0 });
+    setOpponentDisconnected(false);
     if (gameMode === 'online') saveGameState(newState);
   };
 
@@ -646,10 +673,11 @@ export default function ChopsticksGame() {
     setWaiting(false);
     setSearching(false);
     setOpponentName('');
-    setOpponentOnline(true);
     setTimeLeft(30);
     setJankenChoice(null);
     setJankenResult(null);
+    setTimeoutCount({ player1: 0, player2: 0 });
+    setOpponentDisconnected(false);
   };
 
   const renderHand = (player, hand, fingers) => {
@@ -657,17 +685,24 @@ export default function ChopsticksGame() {
     const isDead = fingers === 0 || fingers >= 5;
     
     let isMyTurn = false;
+    let canInteract = false;
+    
     if (gameMode === 'online') {
-      isMyTurn = player === myPlayer;
+      isMyTurn = player === myPlayer && gameState.currentPlayer === myPlayer;
+      canInteract = gameState.currentPlayer === myPlayer;
     } else if (opponentType === 'cpu') {
       isMyTurn = player === 1;
+      canInteract = gameState.currentPlayer === 1;
     } else {
       isMyTurn = player === gameState.currentPlayer;
+      canInteract = true;
     }
 
     return (
       <button
         onClick={() => {
+          if (!canInteract) return;
+          
           const [attackPlayer] = gameState.selectedHand ? gameState.selectedHand.split('-') : [null];
           const isSelfAttack = gameState.selectedHand && parseInt(attackPlayer) === player;
           
@@ -681,10 +716,11 @@ export default function ChopsticksGame() {
           relative w-24 h-32 rounded-2xl font-bold text-2xl transition-all
           ${isDead ? 'bg-gray-800 text-gray-600' : 'bg-gradient-to-br from-blue-500 to-purple-600 text-white'}
           ${isSelected ? 'ring-4 ring-yellow-400 scale-110' : ''}
-          ${isMyTurn && !isDead ? 'hover:scale-105 active:scale-95' : ''}
-          ${!isDead && gameState.selectedHand ? 'hover:ring-2 hover:ring-red-400' : ''}
+          ${isMyTurn && !isDead && canInteract ? 'hover:scale-105 active:scale-95' : ''}
+          ${!isDead && gameState.selectedHand && canInteract ? 'hover:ring-2 hover:ring-red-400' : ''}
+          ${!canInteract ? 'opacity-50 cursor-not-allowed' : ''}
         `}
-        disabled={gameState.winner !== null || gameState.phase !== 'playing'}
+        disabled={gameState.winner !== null || gameState.phase !== 'playing' || !canInteract}
       >
         <div className="absolute top-2 left-2 text-xs opacity-70">
           {hand === 'left' ? '左' : '右'}
@@ -931,9 +967,7 @@ export default function ChopsticksGame() {
             </div>
             {opponentName && (
               <div className="mt-2 flex items-center justify-center gap-2 text-sm">
-                <span className={`w-2 h-2 rounded-full ${opponentOnline ? 'bg-green-400' : 'bg-gray-400'}`}></span>
-                <span>{opponentName}</span>
-                {!opponentOnline && <span className="text-gray-400">(切断)</span>}
+                <span className="text-gray-300">{opponentName}</span>
               </div>
             )}
           </div>
@@ -1057,14 +1091,11 @@ export default function ChopsticksGame() {
               </>
             ) : (
               <>
-                {opponentType === 'cpu' ? <Bot className="w-4 h-4" /> : <Users className="w-4 h-4" />}
+                <Users className="w-4 h-4" />
                 <span className="font-bold">
                   {gameMode === 'online' && opponentName ? opponentName : opponentType === 'cpu' ? 'CPU' : 'プレイヤー 2'}
                 </span>
               </>
-            )}
-            {gameMode === 'online' && opponentName && (
-              <span className={`w-2 h-2 rounded-full ${opponentOnline ? 'bg-green-400' : 'bg-gray-400'}`}></span>
             )}
             {((gameMode === 'online' && myPlayer === 2 && gameState.currentPlayer === 2) ||
               (gameMode === 'online' && myPlayer === 1 && gameState.currentPlayer === 2) ||
@@ -1176,10 +1207,10 @@ export default function ChopsticksGame() {
           </div>
         )}
 
-        {gameMode === 'online' && !opponentOnline && (
+        {gameMode === 'online' && opponentDisconnected && (
           <div className="mt-4 p-3 bg-red-900/50 rounded-lg text-center text-sm">
             <WifiOff className="w-5 h-5 inline mr-2" />
-            相手が切断しました
+            相手が2回連続でタイムアウトしました（切断）
           </div>
         )}
       </div>
