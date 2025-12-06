@@ -50,6 +50,8 @@ export default function ChopsticksGame() {
   const [opponentName, setOpponentName] = useState('');
   const [opponentOnline, setOpponentOnline] = useState(true);
   const [timeLeft, setTimeLeft] = useState(30);
+  const [jankenChoice, setJankenChoice] = useState(null);
+  const [jankenResult, setJankenResult] = useState(null);
 
   const hasFirebase = db !== null && firestoreFunctions !== null;
 
@@ -90,6 +92,11 @@ export default function ChopsticksGame() {
             const lastSeen = opponentLastSeen.toMillis ? opponentLastSeen.toMillis() : opponentLastSeen;
             setOpponentOnline(now - lastSeen < 10000);
           }
+          
+          // じゃんけん結果判定
+          if (state.phase === 'janken' && state.janken1 && state.janken2 && !jankenResult) {
+            determineJankenWinner(state);
+          }
         }
       });
       
@@ -114,6 +121,71 @@ export default function ChopsticksGame() {
     } catch (error) {
       console.error('Heartbeat failed:', error);
     }
+  };
+
+  const makeJankenChoice = async (choice) => {
+    setJankenChoice(choice);
+    const newState = {
+      ...gameState,
+      [`janken${myPlayer}`]: choice
+    };
+    setGameState(newState);
+    await saveGameState(newState);
+  };
+
+  const determineJankenWinner = (state) => {
+    const j1 = state.janken1;
+    const j2 = state.janken2;
+    
+    if (!j1 || !j2) return;
+    
+    let winner = null;
+    if (j1 === j2) {
+      winner = 'draw';
+    } else if (
+      (j1 === 'rock' && j2 === 'scissors') ||
+      (j1 === 'scissors' && j2 === 'paper') ||
+      (j1 === 'paper' && j2 === 'rock')
+    ) {
+      winner = 1;
+    } else {
+      winner = 2;
+    }
+    
+    setJankenResult({ winner, j1, j2 });
+    
+    if (winner !== 'draw') {
+      setTimeout(async () => {
+        const newState = {
+          ...state,
+          phase: 'playing',
+          currentPlayer: winner,
+          turnStartTime: Date.now()
+        };
+        setGameState(newState);
+        setJankenResult(null);
+        await saveGameState(newState);
+      }, 3000);
+    } else {
+      setTimeout(async () => {
+        const newState = {
+          ...state,
+          janken1: null,
+          janken2: null
+        };
+        setGameState(newState);
+        setJankenChoice(null);
+        setJankenResult(null);
+        await saveGameState(newState);
+      }, 3000);
+    }
+  };
+
+  const getJankenEmoji = (choice) => {
+    if (choice === 'rock') return '✊';
+    if (choice === 'paper') return '✋';
+    if (choice === 'scissors') return '✌️';
+    return '?';
   };
 
   // タイマー管理
@@ -229,13 +301,15 @@ export default function ChopsticksGame() {
       selectedHand: null,
       winner: null,
       players: 1,
-      phase: 'playing',
+      phase: 'janken',
       roomType: 'private',
       player1Name: username,
       player2Name: null,
       player1LastSeen: firestoreFunctions.serverTimestamp(),
       player2LastSeen: null,
-      turnStartTime: Date.now()
+      turnStartTime: Date.now(),
+      janken1: null,
+      janken2: null
     };
     
     const gameRef = firestoreFunctions.doc(db, 'games', code);
@@ -297,13 +371,15 @@ export default function ChopsticksGame() {
           selectedHand: null,
           winner: null,
           players: 1,
-          phase: 'playing',
+          phase: 'janken',
           roomType: 'random',
           player1Name: username,
           player2Name: null,
           player1LastSeen: firestoreFunctions.serverTimestamp(),
           player2LastSeen: null,
-          turnStartTime: Date.now()
+          turnStartTime: Date.now(),
+          janken1: null,
+          janken2: null
         };
         
         const gameRef = firestoreFunctions.doc(db, 'games', code);
@@ -372,7 +448,12 @@ export default function ChopsticksGame() {
   const selectHand = (player, hand) => {
     if (gameState.winner || gameState.phase !== 'playing') return;
     
-    if (gameMode === 'online' && player !== myPlayer) return;
+    // オンラインモード: 自分のプレイヤーかつ自分のターンのみ
+    if (gameMode === 'online') {
+      if (player !== myPlayer || gameState.currentPlayer !== myPlayer) return;
+    }
+    
+    // ローカルモード
     if (gameMode === 'local' && opponentType === 'human' && player !== gameState.currentPlayer) return;
     if (gameMode === 'local' && opponentType === 'cpu' && player !== 1) return;
     
@@ -394,7 +475,11 @@ export default function ChopsticksGame() {
     
     const [attackPlayer, attackHand] = gameState.selectedHand.split('-');
     
+    // オンラインモード: 自分のターンのみ
+    if (gameMode === 'online' && gameState.currentPlayer !== myPlayer) return;
     if (gameMode === 'online' && parseInt(attackPlayer) !== myPlayer) return;
+    
+    // ローカルモード
     if (gameMode === 'local' && opponentType === 'human' && parseInt(attackPlayer) !== gameState.currentPlayer) return;
     if (gameMode === 'local' && opponentType === 'cpu' && parseInt(attackPlayer) !== 1) return;
 
@@ -429,7 +514,11 @@ export default function ChopsticksGame() {
     
     const [attackPlayer, attackHand] = gameState.selectedHand.split('-');
     
+    // オンラインモード: 自分のターンのみ
+    if (gameMode === 'online' && gameState.currentPlayer !== myPlayer) return;
     if (gameMode === 'online' && parseInt(attackPlayer) !== myPlayer) return;
+    
+    // ローカルモード
     if (gameMode === 'local' && opponentType === 'human' && parseInt(attackPlayer) !== gameState.currentPlayer) return;
     if (gameMode === 'local' && opponentType === 'cpu' && parseInt(attackPlayer) !== 1) return;
     
@@ -464,6 +553,8 @@ export default function ChopsticksGame() {
     
     let currentPlayerId;
     if (gameMode === 'online') {
+      // オンラインモード: 自分のターンのみ
+      if (gameState.currentPlayer !== myPlayer) return;
       currentPlayerId = myPlayer;
     } else if (opponentType === 'cpu') {
       currentPlayerId = 1;
@@ -518,16 +609,20 @@ export default function ChopsticksGame() {
       selectedHand: null,
       winner: null,
       players: gameState.players,
-      phase: 'playing',
+      phase: gameMode === 'online' ? 'janken' : 'playing',
       roomType: gameState.roomType,
       player1Name: gameState.player1Name,
       player2Name: gameState.player2Name,
       player1LastSeen: gameState.player1LastSeen,
       player2LastSeen: gameState.player2LastSeen,
-      turnStartTime: Date.now()
+      turnStartTime: Date.now(),
+      janken1: null,
+      janken2: null
     };
     setGameState(newState);
     setTimeLeft(30);
+    setJankenChoice(null);
+    setJankenResult(null);
     if (gameMode === 'online') saveGameState(newState);
   };
 
@@ -553,6 +648,8 @@ export default function ChopsticksGame() {
     setOpponentName('');
     setOpponentOnline(true);
     setTimeLeft(30);
+    setJankenChoice(null);
+    setJankenResult(null);
   };
 
   const renderHand = (player, hand, fingers) => {
@@ -809,6 +906,87 @@ export default function ChopsticksGame() {
           >
             キャンセル
           </button>
+        </div>
+      </div>
+    );
+  }
+
+  // じゃんけん画面（オンラインモードのみ）
+  if (gameMode === 'online' && gameState.phase === 'janken') {
+    return (
+      <div className="min-h-screen bg-gradient-to-br from-slate-900 via-purple-900 to-slate-900 text-white p-4 flex items-center justify-center">
+        <div className="max-w-md w-full">
+          <div className="text-center mb-6">
+            <button
+              onClick={leaveRoom}
+              className="px-3 py-1 bg-slate-700 rounded-lg text-sm hover:bg-slate-600 mb-4"
+            >
+              ← 戻る
+            </button>
+            <h1 className="text-3xl font-bold mb-2">じゃんけん</h1>
+            <p className="text-gray-400">先攻後攻を決めましょう</p>
+            <div className="bg-slate-800 rounded-lg p-2 mt-4 inline-block">
+              <Wifi className="w-4 h-4 inline mr-2 text-green-400" />
+              <span className="text-sm font-mono">{roomCode}</span>
+            </div>
+            {opponentName && (
+              <div className="mt-2 flex items-center justify-center gap-2 text-sm">
+                <span className={`w-2 h-2 rounded-full ${opponentOnline ? 'bg-green-400' : 'bg-gray-400'}`}></span>
+                <span>{opponentName}</span>
+                {!opponentOnline && <span className="text-gray-400">(切断)</span>}
+              </div>
+            )}
+          </div>
+
+          {jankenResult ? (
+            <div className="text-center">
+              <div className="text-6xl mb-6 flex items-center justify-center gap-8">
+                <span>{getJankenEmoji(jankenResult.j1)}</span>
+                <span className="text-3xl">VS</span>
+                <span>{getJankenEmoji(jankenResult.j2)}</span>
+              </div>
+              <div className="text-2xl font-bold mb-4">
+                {jankenResult.winner === 'draw' ? (
+                  <span className="text-yellow-400">引き分け! もう一度!</span>
+                ) : (
+                  <span className="text-green-400">
+                    {jankenResult.winner === myPlayer ? 'あなたが先攻!' : `${opponentName}が先攻!`}
+                  </span>
+                )}
+              </div>
+            </div>
+          ) : jankenChoice ? (
+            <div className="text-center">
+              <div className="text-6xl mb-4">{getJankenEmoji(jankenChoice)}</div>
+              <p className="text-xl text-yellow-400 animate-pulse">
+                相手の選択を待っています...
+              </p>
+            </div>
+          ) : (
+            <div>
+              <p className="text-center mb-4 text-gray-300">選んでください</p>
+              <div className="grid grid-cols-3 gap-4">
+                <button
+                  onClick={() => makeJankenChoice('rock')}
+                  className="aspect-square bg-gradient-to-br from-red-600 to-red-800 rounded-2xl text-6xl hover:scale-105 active:scale-95 transition-transform flex items-center justify-center"
+                >
+                  ✊
+                </button>
+                <button
+                  onClick={() => makeJankenChoice('paper')}
+                  className="aspect-square bg-gradient-to-br from-blue-600 to-blue-800 rounded-2xl text-6xl hover:scale-105 active:scale-95 transition-transform flex items-center justify-center"
+                >
+                  ✋
+                </button>
+                <button
+                  onClick={() => makeJankenChoice('scissors')}
+                  className="aspect-square bg-gradient-to-br from-green-600 to-green-800 rounded-2xl text-6xl hover:scale-105 active:scale-95 transition-transform flex items-center justify-center"
+                >
+                  ✌️
+                </button>
+              </div>
+            </div>
+          )}
         </div>
       </div>
     );
